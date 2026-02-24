@@ -1,0 +1,255 @@
+# for access the path
+import os
+
+# the configuration file, stores the path of the input data
+configfile: "config/config.yaml"
+
+# extract the raw input file
+VCF = config["vcf"]
+
+# extract basename automatically
+BASENAME = os.path.basename(VCF).replace(".vcf.gz", "").replace(".vcf", "")
+
+
+rule all:
+    input:
+        f"results/qc/{BASENAME}_qc_summary.png",
+        f"results/pca/{BASENAME}_pca.png",
+        f"results/pixy/{BASENAME}/{BASENAME}_heatmap.png",
+        f"results/pixy/{BASENAME}/{BASENAME}_fst_genomewide.png",
+        f"results/pixy/{BASENAME}/{BASENAME}_dxy_genomewide.png",
+        f"results/pixy/{BASENAME}/{BASENAME}_dxy_vs_fst.png"
+
+
+# 1. Random subset
+# produce a indexed vcf file
+# using random sampling by also maintaining the representative variations
+# for quality assesment
+rule random_subset:
+    input:
+        vcf=VCF
+    output:
+        vcf=f"results/subset/{BASENAME}_subset.vcf.gz",
+        csi=f"results/subset/{BASENAME}_subset.vcf.gz.csi"
+    conda:
+        "envs/vcftools_bcftools_vcflib.yaml"
+    params:
+        random = 0.012          # extract 1.2% of variants  
+    shell:
+        """
+        bcftools view {input.vcf} \
+                | vcfrandomsample -r {params.random} \
+                | bgzip -c > {output.vcf}
+
+        bcftools index --csi {output.vcf}         
+        """
+
+
+# 2. Quality assessment on subset
+# the quality assessment is done on the subset
+# to avoid the computational load 
+# allele frq, mean depth, missingness, variant quality was observed
+rule qc_subset:
+    input:
+        vcf=rules.random_subset.output.vcf,
+    output:
+        freq=f"results/qc/{BASENAME}_subset.frq",
+        depth=f"results/qc/{BASENAME}_subset.ldepth.mean",
+        qual=f"results/qc/{BASENAME}_subset_qual.lqual",
+        miss=f"results/qc/{BASENAME}_subset_site_miss.lmiss",
+        ind_depth=f"results/qc/{BASENAME}_subset_ind.idepth"
+    params:
+        out_prefix=f"results/qc/{BASENAME}_subset",
+        max_allele=2
+    conda:
+        "envs/vcftools_bcftools_vcflib.yaml"
+    shell:
+        """
+        mkdir -p results/qc
+        # allele freq
+        vcftools --gzvcf {input.vcf} --freq2 --max-alleles {params.max_allele} --out {params.out_prefix}
+        # mean depth per site
+        vcftools --gzvcf {input.vcf} --site-mean-depth --out {params.out_prefix}
+        # variant quality
+        vcftools --gzvcf {input.vcf} --site-quality --out {params.out_prefix}_qual
+        # missingness
+        vcftools --gzvcf {input.vcf} --missing-site --out {params.out_prefix}_site_miss
+        # individual depth
+        vcftools --gzvcf {input.vcf} --depth --out {params.out_prefix}_ind
+        """
+
+# 3. Plot Quality for summary
+# the allele frq, mean depth, missingness, variant quality were plotted
+# to understand their distribution in the data
+rule qc_plot:
+    input:
+        Var_Freq = rules.qc_subset.output.freq,
+        Var_Depth = rules.qc_subset.output.depth,
+        Var_Quality = rules.qc_subset.output.qual,
+        Var_s_miss = rules.qc_subset.output.miss,
+        Ind_Depth = rules.qc_subset.output.ind_depth
+    output:
+        png = f"results/qc/{BASENAME}_qc_summary.png"
+    conda:
+        "envs/r.yaml"
+    script:
+        "R_scripts/quality_assess.R"
+
+
+# 4. Filtering original VCF
+# to reduce the bias
+# after making a judgement on filtering threshold
+# the filtering was doen on the raw data
+rule filtering:
+    input:
+        vcf=VCF
+    output:
+        vcf=f"results/filter/{BASENAME}.filter.recode.vcf.gz",
+        csi=f"results/filter/{BASENAME}.filter.recode.vcf.gz.csi"
+    params:
+        # can change the parameter as required
+        min_allele=2,
+        max_allele=2,
+        maf=0.1,
+        miss=0.9, 
+        qual=30,
+        minmDp=5,    # for minimum mean depth per site
+        maxmDp=30,   # for maximum mean depth per site
+        minDp=5,     # for minimum mean depth per individual
+        maxDp=30     # for maximum mean depth per individual
+    conda:
+        "envs/vcftools_bcftools_vcflib.yaml"
+    shell:
+        """
+        mkdir -p results/filter
+
+        vcftools --gzvcf {input.vcf} \
+          --remove-indels --min-alleles {params.min_allele} \
+          --max-alleles {params.max_allele} --maf {params.maf} \
+          --max-missing {params.miss} --minQ {params.qual} \
+          --min-meanDP {params.minmDp} --max-meanDP {params.maxmDp} \
+          --minDP {params.minDp} --maxDP {params.maxDp} \
+          --recode --stdout | bgzip -c > {output.vcf}
+
+        bcftools index --csi {output.vcf}
+        """
+
+
+# 5. PLINK pruning
+# the PLINK software is used to reduce the LD
+# whcich affect the variance explained between a population
+rule plink_prune:
+    input:
+        vcf=rules.filtering.output.vcf
+    output:
+        prune_in=f"results/plink/{BASENAME}.prune.in",
+        prune_out=f"results/plink/{BASENAME}.prune.out",
+        log=f"results/plink/{BASENAME}.log",
+        nsex=f"results/plink/{BASENAME}.nosex"
+    params:
+        out=f"results/plink/{BASENAME}",
+        wind_size=50,
+        step=10,
+        rho=0.2
+    conda:
+        "envs/plink.yaml"
+    shell:
+        """
+        mkdir -p results/plink
+        
+        # the missing id were set to chrom:position
+        # the LD were removed
+        plink --vcf {input.vcf} --double-id \
+              --allow-extra-chr --set-missing-var-ids @:# \
+              --indep-pairwise {params.wind_size} {params.step} {params.rho} \
+              --out {params.out}
+        """
+
+# 6. PCA
+# The population structure was analysed
+# to understand the metadata what we created was correct or not
+# helpful for further downstream analysis
+rule pca:
+    input:
+        vcf=rules.filtering.output.vcf,
+        prune=rules.plink_prune.output.prune_in
+    output:
+        eigenvec=f"results/pca/{BASENAME}.pca.eigenvec",
+        eigenval=f"results/pca/{BASENAME}.pca.eigenval",
+        bed=f"results/pca/{BASENAME}.pca.bed",
+        bim=f"results/pca/{BASENAME}.pca.bim",
+        fam=f"results/pca/{BASENAME}.pca.fam",
+        log=f"results/pca/{BASENAME}.pca.log",
+        nsex=f"results/pca/{BASENAME}.pca.nosex"
+    params:
+        out=f"results/pca/{BASENAME}.pca"
+    conda:
+        "envs/plink.yaml"
+    shell:
+        """
+        mkdir -p results/pca
+
+        plink --vcf {input.vcf} --double-id \
+              --allow-extra-chr --set-missing-var-ids @:# \
+              --extract {input.prune} --make-bed \
+              --pca --out {params.out}
+        """
+
+# 7. PCA plot
+# Examine the PCA plot
+rule pca_plot:
+    input:
+        pca_vec = rules.pca.output.eigenvec,
+        pca_val = rules.pca.output.eigenval
+    output:
+        png = f"results/pca/{BASENAME}_pca.png"
+    conda:
+        "envs/r.yaml"
+    script:
+        "R_scripts/pca.R"    # for plotting pca
+
+
+# 8. Pixy FST + DXY
+# the FST and dXY were estimated using pixy
+# the estimation takes place based on the window
+rule pixy:
+    input:
+        vcf=rules.filtering.output.vcf,
+        pops=config["populations"]
+    output:
+        fst=f"results/pixy/{BASENAME}/pixy_fst.txt",
+        dxy=f"results/pixy/{BASENAME}/pixy_dxy.txt"
+    params:
+        out=f"results/pixy/{BASENAME}",
+        window_size=10000           # can differs based on the study
+    threads: 4
+    conda:
+        "envs/pixy.yaml"
+    shell:
+        """
+        mkdir -p results/pixy
+
+        pixy --stats fst dxy --vcf {input.vcf} \
+             --populations {input.pops} --window_size {params.window_size} \
+             --bypass_invariant_check --n_cores {threads} \
+             --output_folder {params.out}
+        """
+
+# 9. Plot FST + DXY
+# plot the FST and dXY
+# understand their distribution across genome
+# by generating different plots
+
+rule fst_dxy_plots:
+    input:
+        fst_file = rules.pixy.output.fst,
+        dxy_file = rules.pixy.output.dxy
+    output:
+        heatmap_png = f"results/pixy/{BASENAME}/{BASENAME}_heatmap.png",
+        fst_gw_png  = f"results/pixy/{BASENAME}/{BASENAME}_fst_genomewide.png",
+        dxy_gw_png  = f"results/pixy/{BASENAME}/{BASENAME}_dxy_genomewide.png",
+        bar_png = f"results/pixy/{BASENAME}/{BASENAME}_dxy_vs_fst.png"
+    conda:
+        "envs/r.yaml"
+    script:
+        "R_scripts/fst_dxy.R"   # for plotting the relationship between dXY and FST

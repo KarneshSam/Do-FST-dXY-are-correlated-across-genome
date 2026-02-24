@@ -1,0 +1,14 @@
+name: r_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.3.3
+  - r-tidyverse
+  - r-patchwork
+  - r-ggridges
+  - r-readr
+  - r-dplyr
+  - r-tibble
+  - r-scales
+  - r-ggsci

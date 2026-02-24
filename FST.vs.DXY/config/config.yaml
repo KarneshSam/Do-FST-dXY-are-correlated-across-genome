@@ -1,0 +1,7 @@
+# config/config.yaml
+
+# The raw VCF file
+vcf: 'resources/vcf_data/ProjTaxa.vcf.gz'
+
+# Meta-data
+populations: 'resources/metadata/Population.txt'      # the user can edit the metadata, if wish to change the population groups

@@ -1,0 +1,9 @@
+name: variant_env
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - vcftools=0.1.17
+    - bcftools=1.23
+    - vcflib=1.0.14
+
