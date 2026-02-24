@@ -1,6 +1,6 @@
 # **The project works on the Variant Calling Format (VCF) file to study FST and dXY correlation across the genome.**
 
-## **The working directory must follow the tree structure above.**
+## **The working directory must follow the tree structure below.**
 ```text
 .
 ├── config
