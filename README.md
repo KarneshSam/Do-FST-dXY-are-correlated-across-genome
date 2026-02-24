@@ -1,1 +1,1 @@
-## **The Project studied to understand the correlation between FST and dXY between populations.**
+## **The project works on the Variant Calling Format (VCF) file to study FST and dXY correlation across the genome.**
