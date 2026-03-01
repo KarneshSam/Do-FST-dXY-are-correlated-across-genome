@@ -23,6 +23,8 @@
     └── Snakefile
 ```
 
+### The main workflow and documentation can be found under the FST.VS.dXY directory
+
 ### *Notes:*
 * The resources directory needs to be mentioned by the user with the required VCF file and metadata.
 * This Snakemake works for only one VCF file.
