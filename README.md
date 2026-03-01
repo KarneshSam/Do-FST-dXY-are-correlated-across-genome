@@ -23,7 +23,7 @@
     └── Snakefile
 ```
 
-### The main workflow and documentation can be found under the FST.VS.dXY directory
+### The main workflow and documentation can be found under the FST.VS.DXY directory
 
 ### *Notes:*
 * The resources directory needs to be mentioned by the user with the required VCF file and metadata.
